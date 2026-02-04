@@ -3,7 +3,6 @@ services:
     name: pim-backend
     runtime: docker
     rootDir: backend
-    dockerfilePath: ./Dockerfile
     envVars:
       - key: GEMINI_API_KEY
         sync: false  # Set manually in Render dashboard
