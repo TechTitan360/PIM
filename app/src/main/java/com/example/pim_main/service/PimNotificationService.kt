@@ -26,10 +26,20 @@ class PimNotificationService : NotificationListenerService() {
     companion object {
         private const val TAG = "PimNotificationService"
         private const val INSTAGRAM_PACKAGE = "com.instagram.android"
+
+        // Cooldown period per sender (prevent rapid-fire replies / feedback loops)
+        private const val REPLY_COOLDOWN_MS = 10_000L // 10 seconds
     }
 
     // Coroutine scope for async operations
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    // Track processed messages to avoid duplicates and feedback loops
+    private val processedMessages = mutableSetOf<String>()
+    private val lastReplyTime = mutableMapOf<String, Long>()
+
+    // Track our own replies so we don't reply to ourselves
+    private val sentReplies = mutableSetOf<String>()
 
     override fun onCreate() {
         super.onCreate()
@@ -86,6 +96,38 @@ class PimNotificationService : NotificationListenerService() {
 
         Log.d(TAG, "📩 Instagram DM from $sender: $message")
 
+        // === ANTI-FEEDBACK LOOP CHECKS ===
+
+        // 1. Check if this is our own reply (we sent it)
+        val messageKey = "$sender:$message"
+        if (sentReplies.contains(message.lowercase().trim())) {
+            Log.d(TAG, "🔄 Skipping - this is our own reply")
+            return
+        }
+
+        // 2. Check if we already processed this exact message
+        if (processedMessages.contains(messageKey)) {
+            Log.d(TAG, "🔄 Skipping - already processed this message")
+            return
+        }
+
+        // 3. Check cooldown per sender (prevent rapid replies)
+        val now = System.currentTimeMillis()
+        val lastReply = lastReplyTime[sender] ?: 0
+        if (now - lastReply < REPLY_COOLDOWN_MS) {
+            Log.d(TAG, "⏳ Skipping - cooldown active for $sender (${(REPLY_COOLDOWN_MS - (now - lastReply)) / 1000}s left)")
+            return
+        }
+
+        // Mark as processed
+        processedMessages.add(messageKey)
+
+        // Cleanup old entries (keep last 100)
+        if (processedMessages.size > 100) {
+            val toRemove = processedMessages.take(processedMessages.size - 100)
+            processedMessages.removeAll(toRemove.toSet())
+        }
+
         // Find the reply action
         val replyAction = findReplyAction(notification)
         if (replyAction == null) {
@@ -95,7 +137,7 @@ class PimNotificationService : NotificationListenerService() {
 
         // Process in background
         serviceScope.launch {
-            processMessage(sender, message, replyAction)
+            processMessage(sender, message, replyAction, sbn.key)
         }
     }
 
@@ -120,7 +162,8 @@ class PimNotificationService : NotificationListenerService() {
     private suspend fun processMessage(
         sender: String,
         message: String,
-        replyAction: Notification.Action
+        replyAction: Notification.Action,
+        notificationKey: String
     ) {
         Log.d(TAG, "🧠 Sending to PIM backend...")
 
@@ -134,8 +177,28 @@ class PimNotificationService : NotificationListenerService() {
 
         Log.d(TAG, "🤖 AI Reply: $reply")
 
+        // Track that we're sending this reply (to avoid replying to ourselves)
+        sentReplies.add(reply.lowercase().trim())
+
+        // Keep sentReplies small (last 50 replies)
+        if (sentReplies.size > 50) {
+            val toRemove = sentReplies.take(sentReplies.size - 50)
+            sentReplies.removeAll(toRemove.toSet())
+        }
+
+        // Update cooldown timestamp for this sender
+        lastReplyTime[sender] = System.currentTimeMillis()
+
         // Send the reply
         sendReply(replyAction, reply)
+
+        // Dismiss the notification to prevent re-processing
+        try {
+            cancelNotification(notificationKey)
+            Log.d(TAG, "🗑️ Notification dismissed")
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ Could not dismiss notification: ${e.message}")
+        }
     }
 
     /**

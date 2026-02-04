@@ -18,19 +18,24 @@ const app = new Elysia()
         const { sender, message } = body;
         const startTime = Date.now();
 
-        console.log(`📩 [${new Date().toISOString()}] Incoming from ${sender}: ${message}`);
+        // Normalize sender name (trim whitespace, lowercase for consistency)
+        const normalizedSender = sender.trim().toLowerCase();
+
+        console.log(`📩 [${new Date().toISOString()}] Incoming from ${normalizedSender}: ${message}`);
 
         try {
             let formattedHistory: Array<{ role: 'user' | 'model'; content: string }> = [];
 
-            // Step 1: Fetch conversation history (last 10 messages) - only if DB is connected
+            // Step 1: Fetch conversation history (last 10 messages) - ONLY from this sender
             if (db) {
                 const history = await db
                     .select()
                     .from(messages)
-                    .where(eq(messages.contactName, sender))
+                    .where(eq(messages.contactName, normalizedSender))
                     .orderBy(desc(messages.createdAt))
                     .limit(10);
+
+                console.log(`📚 Found ${history.length} previous messages with ${normalizedSender}`);
 
                 // Reverse to get chronological order
                 const chronologicalHistory = history.reverse();
@@ -40,6 +45,10 @@ const app = new Elysia()
                     role: msg.isFromUser ? 'model' as const : 'user' as const,
                     content: msg.messageContent,
                 }));
+
+                if (formattedHistory.length > 0) {
+                    console.log(`📜 Conversation context: ${formattedHistory.map(h => `[${h.role}]: ${h.content.substring(0, 30)}...`).join(' | ')}`);
+                }
             }
 
             const dbTime = Date.now();
@@ -60,7 +69,7 @@ const app = new Elysia()
             if (db) {
                 // Save incoming message
                 await db.insert(messages).values({
-                    contactName: sender,
+                    contactName: normalizedSender,
                     messageContent: message,
                     isFromUser: false, // They sent this
                     platform: 'instagram',
@@ -68,7 +77,7 @@ const app = new Elysia()
 
                 // Save our reply
                 await db.insert(messages).values({
-                    contactName: sender,
+                    contactName: normalizedSender,
                     messageContent: reply,
                     isFromUser: true, // We replied
                     platform: 'instagram',
