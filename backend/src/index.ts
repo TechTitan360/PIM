@@ -1,9 +1,9 @@
+import 'dotenv/config';
 import { Elysia, t } from 'elysia';
 import { db } from './db';
 import { messages } from './db/schema';
 import { generateReply } from './gemini';
 import { eq, desc } from 'drizzle-orm';
-import 'dotenv/config';
 
 const app = new Elysia()
     // Health check
@@ -98,7 +98,9 @@ const app = new Elysia()
                 },
             };
         } catch (error) {
-            console.error('❌ Error processing message:', error);
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            console.error('❌ Error processing message:', errorMsg);
+            console.error('❌ Full error:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
 
             // Fallback response
             return {
@@ -106,9 +108,10 @@ const app = new Elysia()
                 sender,
                 originalMessage: message,
                 reply: "can't talk rn, text you later",
-                error: String(error),
+                error: errorMsg,
             };
         }
+
     }, {
         body: t.Object({
             sender: t.String(),
@@ -160,6 +163,12 @@ const app = new Elysia()
         return { sender, messages: history };
     })
 
+    // API key status check
+    .get('/keys', async () => {
+        const { getKeyStatus } = await import('./gemini');
+        return getKeyStatus();
+    })
+
     .listen(process.env.PORT || 3000);
 
 console.log(`
@@ -171,6 +180,7 @@ Endpoints:
   POST /chat      - Process incoming DM
   POST /test      - Test Gemini without DB
   GET  /history/:sender - Get conversation history
+  GET  /keys      - Check API key status
 `);
 
 export type App = typeof app;

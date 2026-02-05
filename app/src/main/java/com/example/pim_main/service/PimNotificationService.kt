@@ -28,18 +28,23 @@ class PimNotificationService : NotificationListenerService() {
         private const val INSTAGRAM_PACKAGE = "com.instagram.android"
 
         // Cooldown period per sender (prevent rapid-fire replies / feedback loops)
-        private const val REPLY_COOLDOWN_MS = 10_000L // 10 seconds
+        private const val REPLY_COOLDOWN_MS = 15_000L // 15 seconds - increased for safety
+
+        // Time window to consider a message as "our own reply" (feedback detection)
+        private const val SELF_REPLY_WINDOW_MS = 30_000L // 30 seconds
     }
 
     // Coroutine scope for async operations
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     // Track processed messages to avoid duplicates and feedback loops
-    private val processedMessages = mutableSetOf<String>()
+    // Key: hash of sender+message, Value: timestamp when processed
+    private val processedMessages = mutableMapOf<String, Long>()
     private val lastReplyTime = mutableMapOf<String, Long>()
 
-    // Track our own replies so we don't reply to ourselves
-    private val sentReplies = mutableSetOf<String>()
+    // Track our own replies with timestamps so we don't reply to ourselves
+    // Key: normalized reply text, Value: timestamp when sent
+    private val sentReplies = mutableMapOf<String, Long>()
 
     override fun onCreate() {
         super.onCreate()
@@ -97,36 +102,38 @@ class PimNotificationService : NotificationListenerService() {
         Log.d(TAG, "📩 Instagram DM from $sender: $message")
 
         // === ANTI-FEEDBACK LOOP CHECKS ===
+        val now = System.currentTimeMillis()
+        val normalizedMessage = message.lowercase().trim()
+        val messageKey = "${sender.lowercase()}:$normalizedMessage"
 
-        // 1. Check if this is our own reply (we sent it)
-        val messageKey = "$sender:$message"
-        if (sentReplies.contains(message.lowercase().trim())) {
-            Log.d(TAG, "🔄 Skipping - this is our own reply")
+        // 1. Check if this message matches something we recently sent (our own reply)
+        val sentTime = sentReplies[normalizedMessage]
+        if (sentTime != null && (now - sentTime) < SELF_REPLY_WINDOW_MS) {
+            Log.d(TAG, "🔄 Skipping - this appears to be our own reply (sent ${(now - sentTime) / 1000}s ago)")
             return
         }
 
-        // 2. Check if we already processed this exact message
-        if (processedMessages.contains(messageKey)) {
-            Log.d(TAG, "🔄 Skipping - already processed this message")
+        // 2. Check if we already processed this exact message recently
+        val processedTime = processedMessages[messageKey]
+        if (processedTime != null && (now - processedTime) < REPLY_COOLDOWN_MS * 2) {
+            Log.d(TAG, "🔄 Skipping - already processed this message ${(now - processedTime) / 1000}s ago")
             return
         }
 
         // 3. Check cooldown per sender (prevent rapid replies)
-        val now = System.currentTimeMillis()
-        val lastReply = lastReplyTime[sender] ?: 0
+        val lastReply = lastReplyTime[sender.lowercase()] ?: 0
         if (now - lastReply < REPLY_COOLDOWN_MS) {
             Log.d(TAG, "⏳ Skipping - cooldown active for $sender (${(REPLY_COOLDOWN_MS - (now - lastReply)) / 1000}s left)")
             return
         }
 
-        // Mark as processed
-        processedMessages.add(messageKey)
+        // Mark as processed with current timestamp
+        processedMessages[messageKey] = now
 
-        // Cleanup old entries (keep last 100)
-        if (processedMessages.size > 100) {
-            val toRemove = processedMessages.take(processedMessages.size - 100)
-            processedMessages.removeAll(toRemove.toSet())
-        }
+        // Cleanup old entries (remove entries older than 5 minutes)
+        val fiveMinutesAgo = now - 300_000L
+        processedMessages.entries.removeIf { it.value < fiveMinutesAgo }
+        sentReplies.entries.removeIf { it.value < fiveMinutesAgo }
 
         // Find the reply action
         val replyAction = findReplyAction(notification)
@@ -177,17 +184,12 @@ class PimNotificationService : NotificationListenerService() {
 
         Log.d(TAG, "🤖 AI Reply: $reply")
 
-        // Track that we're sending this reply (to avoid replying to ourselves)
-        sentReplies.add(reply.lowercase().trim())
-
-        // Keep sentReplies small (last 50 replies)
-        if (sentReplies.size > 50) {
-            val toRemove = sentReplies.take(sentReplies.size - 50)
-            sentReplies.removeAll(toRemove.toSet())
-        }
+        // Track that we're sending this reply with timestamp (to avoid replying to ourselves)
+        val normalizedReply = reply.lowercase().trim()
+        sentReplies[normalizedReply] = System.currentTimeMillis()
 
         // Update cooldown timestamp for this sender
-        lastReplyTime[sender] = System.currentTimeMillis()
+        lastReplyTime[sender.lowercase()] = System.currentTimeMillis()
 
         // Send the reply
         sendReply(replyAction, reply)

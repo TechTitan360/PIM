@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai';
 
 /**
@@ -12,13 +13,19 @@ const API_KEYS: string[] = [
     process.env.GEMINI_API_KEY_3,
     process.env.GEMINI_API_KEY_4,
     process.env.GEMINI_API_KEY_5,
-].filter((key): key is string => !!key); // Filter out undefined/empty keys
+].filter((key): key is string => typeof key === 'string' && key.trim().length > 0);
 
 if (API_KEYS.length === 0) {
+    console.error('❌ No Gemini API keys found! Available env vars:', Object.keys(process.env).filter(k => k.includes('GEMINI')));
     throw new Error('No Gemini API keys found! Set GEMINI_API_KEY in .env');
 }
 
-console.log(`🔑 Loaded ${API_KEYS.length} Gemini API key(s)`);
+// Log which keys are loaded (masked for security)
+API_KEYS.forEach((key, index) => {
+    const masked = key.substring(0, 8) + '...' + key.substring(key.length - 4);
+    console.log(`🔑 Key ${index + 1}: ${masked}`);
+});
+console.log(`✅ Loaded ${API_KEYS.length} Gemini API key(s)`);
 
 let currentKeyIndex = 0;
 
@@ -100,7 +107,11 @@ export async function generateReply(context: ChatContext): Promise<string> {
     let lastError: Error | null = null;
     const maxRetries = API_KEYS.length;
 
+    console.log(`🎯 Attempting to generate reply for ${sender}, trying up to ${maxRetries} key(s)`);
+
     for (let attempt = 0; attempt < maxRetries; attempt++) {
+        console.log(`🔄 Attempt ${attempt + 1}/${maxRetries} using key ${currentKeyIndex + 1}`);
+
         try {
             const model = getModel();
 
@@ -119,30 +130,49 @@ export async function generateReply(context: ChatContext): Promise<string> {
                 ],
             });
 
+            console.log(`📤 Sending message to Gemini: "${prompt.substring(0, 50)}..."`);
+
             // Generate response
             const result = await chat.sendMessage(prompt);
             const response = result.response.text();
 
-            console.log(`✅ Response generated using key ${currentKeyIndex + 1}`);
+            console.log(`✅ Response generated using key ${currentKeyIndex + 1}: "${response.substring(0, 50)}..."`);
             return response.trim();
 
         } catch (error: any) {
             lastError = error;
-            console.error(`❌ Key ${currentKeyIndex + 1} failed: ${error.message}`);
+            const errorMessage = error?.message || String(error);
+            const errorStatus = error?.status || 'unknown';
 
-            // Check if it's a rate limit or bad request error
-            if (error.status === 429 || error.status === 400 || error.message?.includes('quota') || error.message?.includes('rate')) {
-                console.log(`⚠️ Rate limit or quota exceeded on key ${currentKeyIndex + 1}`);
+            console.error(`❌ Key ${currentKeyIndex + 1} failed!`);
+            console.error(`   Status: ${errorStatus}`);
+            console.error(`   Message: ${errorMessage}`);
+
+            // Check if it's a rate limit, quota, or bad request error
+            const isRotatable =
+                errorStatus === 429 ||
+                errorStatus === 400 ||
+                errorStatus === 403 ||
+                errorStatus === 500 ||
+                errorMessage?.includes('quota') ||
+                errorMessage?.includes('rate') ||
+                errorMessage?.includes('limit') ||
+                errorMessage?.includes('exhausted') ||
+                errorMessage?.includes('API key');
+
+            if (isRotatable && attempt < maxRetries - 1) {
+                console.log(`⚠️ Rotating to next key...`);
                 rotateKey();
-            } else {
+            } else if (attempt < maxRetries - 1) {
                 // For other errors, still try rotating
+                console.log(`⚠️ Unknown error type, still rotating to try next key...`);
                 rotateKey();
             }
         }
     }
 
     // All keys exhausted
-    console.error(`💀 All ${API_KEYS.length} API keys failed!`);
+    console.error(`💀 All ${API_KEYS.length} API keys failed! Last error: ${lastError?.message}`);
     throw lastError || new Error('All API keys exhausted');
 }
 
@@ -156,3 +186,19 @@ export async function quickReply(message: string): Promise<string> {
         history: [],
     });
 }
+
+/**
+ * Get current API key status for debugging
+ */
+export function getKeyStatus() {
+    return {
+        totalKeys: API_KEYS.length,
+        currentKeyIndex: currentKeyIndex + 1,
+        keys: API_KEYS.map((key, index) => ({
+            index: index + 1,
+            active: index === currentKeyIndex,
+            masked: key.substring(0, 8) + '...' + key.substring(key.length - 4),
+        })),
+    };
+}
+
