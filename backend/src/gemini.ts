@@ -42,7 +42,7 @@ function getCurrentKey(): string {
 function rotateKey(): void {
     const oldIndex = currentKeyIndex;
     currentKeyIndex = (currentKeyIndex + 1) % API_KEYS.length;
-    console.log(`🔄 Rotated API key: ${oldIndex + 1} → ${currentKeyIndex + 1} (of ${API_KEYS.length})`);
+    console.log(`🔄 Rotated API key: ${oldIndex + 1} -> ${currentKeyIndex + 1} (of ${API_KEYS.length})`);
 }
 
 /**
