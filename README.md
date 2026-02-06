@@ -25,7 +25,7 @@ PIM isn't built to be sold. It's built to solve a specific problem in my life, u
         ↓
 🛡️ Anti-feedback checks (cooldown, self-reply, duplicate)
         ↓
-📤 POST to https://pim-backend-auhy.onrender.com/chat
+📤 POST to https://pim-backend-b9ko.onrender.com/chat
         ↓
 🗄️ Backend fetches last 10 messages for THIS sender only
         ↓

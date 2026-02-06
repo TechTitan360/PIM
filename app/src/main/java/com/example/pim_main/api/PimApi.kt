@@ -1,6 +1,7 @@
 package com.example.pim_main.api
 
 import android.util.Log
+import com.example.pim_main.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -10,14 +11,14 @@ import java.net.URL
 /**
  * PIM API Client - Connects to the Bun backend
  *
- * IMPORTANT: Replace BASE_URL with your PC's local IP address!
- * Run `ipconfig` in terminal to find your IPv4 address
+ * Backend URL is configured in local.properties:
+ * PIM_BACKEND_URL=https://your-backend.onrender.com
  */
 object PimApi {
     private const val TAG = "PimApi"
 
-    // Production backend URL on Render
-    private const val BASE_URL = "https://pim-backend-auhy.onrender.com"
+    // Backend URL from BuildConfig (set in local.properties)
+    private val BASE_URL = BuildConfig.PIM_BACKEND_URL
 
     /**
      * Send a message to the PIM backend and get an AI-generated reply
