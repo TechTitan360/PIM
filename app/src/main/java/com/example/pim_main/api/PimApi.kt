@@ -106,4 +106,39 @@ object PimApi {
             }
         }
     }
+
+    /**
+     * Lightweight ping to keep backend alive
+     * Used by BackendKeepAliveWorker to prevent cold starts on Render
+     *
+     * This is a simple HEAD request - faster and uses less data than GET
+     */
+    suspend fun pingBackend(): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                Log.d(TAG, "🏓 Pinging backend...")
+
+                val url = URL(BASE_URL)
+                val connection = url.openConnection() as HttpURLConnection
+
+                connection.apply {
+                    requestMethod = "GET"  // Use GET for simple ping
+                    connectTimeout = 10000  // 10 seconds - backend might be waking up
+                    readTimeout = 10000
+                    instanceFollowRedirects = true
+                }
+
+                val responseCode = connection.responseCode
+                val isAlive = responseCode == HttpURLConnection.HTTP_OK
+
+                Log.d(TAG, "🏓 Ping result: $responseCode (${if (isAlive) "alive" else "dead"})")
+
+                connection.disconnect()
+                isAlive
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Ping failed: ${e.message}")
+                false
+            }
+        }
+    }
 }
